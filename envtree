@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE=".envtree.json"
+
+# Find repo root from current directory
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "Error: not inside a git repository."
+  exit 1
+}
+
+usage() {
+  echo "Usage: envtree <init|pull|push>"
+  echo ""
+  echo "  init   Create a $CONFIG_FILE config file for this repo"
+  echo "  pull   Copy .env files from main worktree into this worktree"
+  echo "  push   Copy .env files from this worktree into main worktree"
+  exit 1
+}
+
+# Resolve env files from config globs
+resolve_files() {
+  local root="$1"
+  local config="${REPO_ROOT}/${CONFIG_FILE}"
+
+  if [ ! -f "$config" ]; then
+    echo "Error: $CONFIG_FILE not found in repo root."
+    echo "Run 'envtree init' to create one."
+    exit 1
+  fi
+
+  local globs
+  globs="$(python3 -c "import json,sys; print('\n'.join(json.load(open(sys.argv[1]))['files']))" "$config")"
+
+  local files=()
+  while IFS= read -r glob; do
+    while IFS= read -r -d '' match; do
+      files+=("${match#./}")
+    done < <(cd "$root" && find . -path "./$glob" -print0 2>/dev/null)
+  done <<< "$globs"
+
+  printf '%s\n' "${files[@]}"
+}
+
+get_main_worktree() {
+  local main
+  main="$(git worktree list --porcelain | grep '^worktree ' | head -1 | sed 's/^worktree //')"
+
+  if [ -z "$main" ]; then
+    echo "Error: could not detect main worktree." >&2
+    exit 1
+  fi
+
+  if [ "$main" = "$REPO_ROOT" ]; then
+    echo "Error: you're already in the main worktree. Nothing to sync." >&2
+    exit 1
+  fi
+
+  echo "$main"
+}
+
+cmd_init() {
+  local config="${REPO_ROOT}/${CONFIG_FILE}"
+
+  if [ -f "$config" ]; then
+    echo "$CONFIG_FILE already exists:"
+    cat "$config"
+    echo ""
+    printf "Overwrite? [y/N] "
+    read -r answer
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+  fi
+
+  echo "Enter .env file glob patterns (one per line, empty line to finish):"
+  echo "Examples: apps/api/.env.local, **/.env, apps/*/.env.local"
+  echo ""
+
+  local globs=()
+  while true; do
+    printf "> "
+    read -r glob
+    [ -z "$glob" ] && break
+    globs+=("$glob")
+  done
+
+  if [ ${#globs[@]} -eq 0 ]; then
+    echo "No patterns entered. Aborted."
+    exit 1
+  fi
+
+  python3 -c "
+import json, sys
+globs = sys.argv[1:]
+print(json.dumps({'files': globs}, indent=2))
+" "${globs[@]}" > "$config"
+
+  echo ""
+  echo "Created $CONFIG_FILE:"
+  cat "$config"
+}
+
+cmd_pull() {
+  local main
+  main="$(get_main_worktree)"
+
+  local files
+  files="$(resolve_files "$main")"
+
+  if [ -z "$files" ]; then
+    echo "No .env files matched in main worktree."
+    exit 1
+  fi
+
+  local count=0
+  while IFS= read -r rel; do
+    src="${main}/${rel}"
+    dest="${REPO_ROOT}/${rel}"
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    echo "  pulled: $rel"
+    count=$((count + 1))
+  done <<< "$files"
+
+  echo "Pulled $count env file(s) from main worktree"
+}
+
+cmd_push() {
+  local main
+  main="$(get_main_worktree)"
+
+  local files
+  files="$(resolve_files "$REPO_ROOT")"
+
+  if [ -z "$files" ]; then
+    echo "No .env files matched in this worktree."
+    exit 1
+  fi
+
+  echo "Push to main worktree ($main):"
+  local found=()
+  while IFS= read -r rel; do
+    echo "  $rel"
+    found+=("$rel")
+  done <<< "$files"
+  echo ""
+
+  local has_diff=false
+  for rel in "${found[@]}"; do
+    dest="${main}/${rel}"
+    if [ -f "$dest" ] && ! diff -q "${REPO_ROOT}/${rel}" "$dest" > /dev/null 2>&1; then
+      has_diff=true
+      break
+    fi
+  done
+
+  if [ "$has_diff" = true ]; then
+    echo "Warning: this will overwrite files in the main worktree."
+    printf "Continue? [y/N] "
+    read -r answer
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+  fi
+
+  local count=0
+  for rel in "${found[@]}"; do
+    src="${REPO_ROOT}/${rel}"
+    dest="${main}/${rel}"
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    echo "  pushed: $rel"
+    count=$((count + 1))
+  done
+
+  echo "Pushed $count env file(s) to main worktree"
+}
+
+case "${1:-}" in
+  init) cmd_init ;;
+  pull) cmd_pull ;;
+  push) cmd_push ;;
+  *) usage ;;
+esac
