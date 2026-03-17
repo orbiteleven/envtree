@@ -45,5 +45,5 @@ Push warns before overwriting files that differ in the main worktree.
 
 ## Requirements
 
-- bash, git, python3 (for JSON parsing)
+- bash, git
 - A git repo with worktrees (`git worktree add`)
