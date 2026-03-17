@@ -1,0 +1,6 @@
+{
+  "files": [
+    ".env",
+    "apps/*/.env.local"
+  ]
+}
