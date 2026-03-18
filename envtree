@@ -30,7 +30,7 @@ usage() {
   echo ""
   echo "  --debug       Show detailed resolution and copy steps"
   echo ""
-  echo "Source priority: <dir> arg > \"source\" in $CONFIG_FILE > main git worktree"
+  echo "Source priority: <dir> arg > \"source\" in $CONFIG_FILE"
   exit 1
 }
 
@@ -75,39 +75,29 @@ resolve_files() {
 
 get_config_source() {
   local config="${REPO_ROOT}/${CONFIG_FILE}"
-  if [ -f "$config" ]; then
-    local raw
-    raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
-    if [ -n "$raw" ]; then
-      # Expand ~ to home directory
-      local expanded="${raw/#\~/$HOME}"
-      debug "config source: '$raw' -> '$expanded'"
-      if [ -d "$expanded" ]; then
-        echo "$expanded"
-      else
-        echo "Error: source directory '$raw' from $CONFIG_FILE not found." >&2
-        exit 1
-      fi
-    fi
-  fi
-}
-
-get_main_worktree() {
-  local main
-  main="$(git worktree list --porcelain | grep '^worktree ' | head -1 | sed 's/^worktree //')"
-  debug "main worktree: '$main', current repo: '$REPO_ROOT'"
-
-  if [ -z "$main" ]; then
-    echo "Error: could not detect main worktree." >&2
+  if [ ! -f "$config" ]; then
+    echo "Error: $CONFIG_FILE not found in repo root." >&2
+    echo "Run 'envtree init' to create one." >&2
     exit 1
   fi
 
-  if [ "$main" = "$REPO_ROOT" ]; then
-    echo "Error: you're already in the main worktree. Nothing to sync." >&2
+  local raw
+  raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
+  if [ -z "$raw" ]; then
+    echo "Error: \"source\" is required in $CONFIG_FILE." >&2
+    echo "Set it to the directory containing your .env files (e.g. ~/projects/myapp)." >&2
     exit 1
   fi
 
-  echo "$main"
+  # Expand ~ to home directory
+  local expanded="${raw/#\~/$HOME}"
+  debug "config source: '$raw' -> '$expanded'"
+  if [ -d "$expanded" ]; then
+    echo "$expanded"
+  else
+    echo "Error: source directory '$raw' from $CONFIG_FILE not found." >&2
+    exit 1
+  fi
 }
 
 cmd_init() {
@@ -125,6 +115,18 @@ cmd_init() {
     fi
   fi
 
+  echo "Source directory (where your .env files live):"
+  echo "Example: ~/projects/myapp"
+  echo ""
+  printf "> "
+  read -r source_dir
+
+  if [ -z "$source_dir" ]; then
+    echo "No source directory entered. Aborted."
+    exit 1
+  fi
+
+  echo ""
   echo "Enter .env file glob patterns (one per line, empty line to finish):"
   echo "Examples: apps/api/.env.local, **/.env, apps/*/.env.local"
   echo ""
@@ -142,7 +144,7 @@ cmd_init() {
     exit 1
   fi
 
-  printf '{\n  "files": [\n' > "$config"
+  printf '{\n  "source": "%s",\n  "files": [\n' "$source_dir" > "$config"
   local i=0
   for g in "${globs[@]}"; do
     [ $i -gt 0 ] && printf ',\n' >> "$config"
@@ -163,12 +165,7 @@ cmd_pull() {
     label="$source"
   else
     source="$(get_config_source)"
-    if [ -n "$source" ]; then
-      label="$source"
-    else
-      source="$(get_main_worktree)"
-      label="main worktree"
-    fi
+    label="$source"
   fi
 
   debug "pull source: '$source' ($label)"
@@ -202,12 +199,7 @@ cmd_push() {
     label="$target"
   else
     target="$(get_config_source)"
-    if [ -n "$target" ]; then
-      label="$target"
-    else
-      target="$(get_main_worktree)"
-      label="main worktree"
-    fi
+    label="$target"
   fi
 
   debug "push target: '$target' ($label)"

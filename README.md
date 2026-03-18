@@ -4,15 +4,28 @@ Sync .env files across git worktrees. Pull env files into branch worktrees, or p
 
 ## Install
 
+Add it as a dev dependency in your project:
+
 ```bash
-npm install -g envtree-sync
+npm install --save-dev envtree-sync
 ```
 
 Or with other package managers:
 
 ```bash
-yarn global add envtree-sync
-pnpm add -g envtree-sync
+yarn add --dev envtree-sync
+pnpm add --save-dev envtree-sync
+```
+
+Then run it with `npx envtree`, or add scripts to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "env:pull": "envtree pull",
+    "env:push": "envtree push"
+  }
+}
 ```
 
 ## Setup
@@ -20,25 +33,12 @@ pnpm add -g envtree-sync
 In your repo, run:
 
 ```bash
-envtree init
+npx envtree init
 ```
 
-This creates `.envtree.json` in the repo root with glob patterns for your env files. Commit it so all worktrees share the config.
+This creates `.envtree.json` in the repo root with a `source` directory and glob patterns for your env files. Commit it so all worktrees share the config.
 
 Example `.envtree.json`:
-
-```json
-{
-  "files": [
-    "apps/api/.env.local",
-    "apps/*/.env"
-  ]
-}
-```
-
-### Custom source directory
-
-By default, envtree syncs from the main git worktree. If your .env files live elsewhere (e.g. a specific local checkout), set `source` in your config:
 
 ```json
 {
@@ -50,25 +50,25 @@ By default, envtree syncs from the main git worktree. If your .env files live el
 }
 ```
 
-This is useful when the main worktree doesn't have .env files (they're gitignored) and you want to pull from a directory where they already exist. Supports `~` for the home directory.
+`source` is the local directory where your .env files live (e.g. a specific checkout). Supports `~` for the home directory.
 
 ## Usage
 
-From any worktree (not the main one):
+From any worktree:
 
 ```bash
-envtree pull            # copy .env files into this worktree
-envtree push            # copy .env files from this worktree to the source
+npx envtree pull            # copy .env files into this worktree
+npx envtree push            # copy .env files from this worktree to the source
 ```
 
-You can also pass a directory directly, overriding both the config and main worktree:
+You can also pass a directory directly, overriding the config source:
 
 ```bash
-envtree pull ~/myenvs   # pull from a specific directory
-envtree push ~/myenvs   # push to a specific directory
+npx envtree pull ~/myenvs   # pull from a specific directory
+npx envtree push ~/myenvs   # push to a specific directory
 ```
 
-Source priority: CLI argument > `source` in `.envtree.json` > main git worktree.
+Source priority: CLI argument > `source` in `.envtree.json`.
 
 Push warns before overwriting files that differ in the target.
 
