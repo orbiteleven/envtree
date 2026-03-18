@@ -1,6 +1,6 @@
 # envtree
 
-Sync .env files across git worktrees. The main worktree is the source of truth — pull env files into branch worktrees, or push changes back.
+Sync .env files across git worktrees. Pull env files into branch worktrees, or push changes back.
 
 ## Install
 
@@ -36,16 +36,41 @@ Example `.envtree.json`:
 }
 ```
 
+### Custom source directory
+
+By default, envtree syncs from the main git worktree. If your .env files live elsewhere (e.g. a specific local checkout), set `source` in your config:
+
+```json
+{
+  "source": "~/projects/myapp",
+  "files": [
+    ".env",
+    "apps/*/.env.local"
+  ]
+}
+```
+
+This is useful when the main worktree doesn't have .env files (they're gitignored) and you want to pull from a directory where they already exist. Supports `~` for the home directory.
+
 ## Usage
 
 From any worktree (not the main one):
 
 ```bash
-envtree pull    # copy .env files from main worktree into this one
-envtree push    # copy .env files from this worktree back to main
+envtree pull            # copy .env files into this worktree
+envtree push            # copy .env files from this worktree to the source
 ```
 
-Push warns before overwriting files that differ in the main worktree.
+You can also pass a directory directly, overriding both the config and main worktree:
+
+```bash
+envtree pull ~/myenvs   # pull from a specific directory
+envtree push ~/myenvs   # push to a specific directory
+```
+
+Source priority: CLI argument > `source` in `.envtree.json` > main git worktree.
+
+Push warns before overwriting files that differ in the target.
 
 ## Requirements
 

@@ -12,9 +12,11 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 usage() {
   echo "Usage: envtree <init|pull|push>"
   echo ""
-  echo "  init   Create a $CONFIG_FILE config file for this repo"
-  echo "  pull   Copy .env files from main worktree into this worktree"
-  echo "  push   Copy .env files from this worktree into main worktree"
+  echo "  init          Create a $CONFIG_FILE config file for this repo"
+  echo "  pull [<dir>]  Copy .env files from source into this worktree"
+  echo "  push [<dir>]  Copy .env files from this worktree into target"
+  echo ""
+  echo "Source priority: <dir> arg > \"source\" in $CONFIG_FILE > main git worktree"
   exit 1
 }
 
@@ -30,7 +32,7 @@ resolve_files() {
   fi
 
   local globs
-  globs="$(sed -n 's/^ *"\(.*\)".*$/\1/p' "$config" | grep -v '^files$')"
+  globs="$(sed -n '/\"files\"/,/\]/{ s/^ *"\([^"]*\)".*/\1/p; }' "$config" | grep -v '^files$')"
 
   local files=()
   while IFS= read -r glob; do
@@ -52,6 +54,24 @@ resolve_files() {
   done <<< "$globs"
 
   printf '%s\n' "${files[@]}"
+}
+
+get_config_source() {
+  local config="${REPO_ROOT}/${CONFIG_FILE}"
+  if [ -f "$config" ]; then
+    local raw
+    raw="$(sed -n 's/^ *"source" *: *"\(.*\)".*/\1/p' "$config" | head -1)"
+    if [ -n "$raw" ]; then
+      # Expand ~ to home directory
+      local expanded="${raw/#\~/$HOME}"
+      if [ -d "$expanded" ]; then
+        echo "$expanded"
+      else
+        echo "Error: source directory '$raw' from $CONFIG_FILE not found." >&2
+        exit 1
+      fi
+    fi
+  fi
 }
 
 get_main_worktree() {
@@ -118,20 +138,31 @@ cmd_init() {
 }
 
 cmd_pull() {
-  local main
-  main="$(get_main_worktree)"
+  local source label
+  if [ -n "${1:-}" ]; then
+    source="$(cd "$1" && pwd)" || { echo "Error: directory '$1' not found." >&2; exit 1; }
+    label="$source"
+  else
+    source="$(get_config_source)"
+    if [ -n "$source" ]; then
+      label="$source"
+    else
+      source="$(get_main_worktree)"
+      label="main worktree"
+    fi
+  fi
 
   local files
-  files="$(resolve_files "$main")"
+  files="$(resolve_files "$source")"
 
   if [ -z "$files" ]; then
-    echo "No .env files matched in main worktree."
+    echo "No .env files matched in $label."
     exit 1
   fi
 
   local count=0
   while IFS= read -r rel; do
-    src="${main}/${rel}"
+    src="${source}/${rel}"
     dest="${REPO_ROOT}/${rel}"
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
@@ -139,12 +170,23 @@ cmd_pull() {
     count=$((count + 1))
   done <<< "$files"
 
-  echo "Pulled $count env file(s) from main worktree"
+  echo "Pulled $count env file(s) from $label"
 }
 
 cmd_push() {
-  local main
-  main="$(get_main_worktree)"
+  local target label
+  if [ -n "${1:-}" ]; then
+    target="$(cd "$1" && pwd)" || { echo "Error: directory '$1' not found." >&2; exit 1; }
+    label="$target"
+  else
+    target="$(get_config_source)"
+    if [ -n "$target" ]; then
+      label="$target"
+    else
+      target="$(get_main_worktree)"
+      label="main worktree"
+    fi
+  fi
 
   local files
   files="$(resolve_files "$REPO_ROOT")"
@@ -154,7 +196,7 @@ cmd_push() {
     exit 1
   fi
 
-  echo "Push to main worktree ($main):"
+  echo "Push to $label ($target):"
   local found=()
   while IFS= read -r rel; do
     echo "  $rel"
@@ -164,7 +206,7 @@ cmd_push() {
 
   local has_diff=false
   for rel in "${found[@]}"; do
-    dest="${main}/${rel}"
+    dest="${target}/${rel}"
     if [ -f "$dest" ] && ! diff -q "${REPO_ROOT}/${rel}" "$dest" > /dev/null 2>&1; then
       has_diff=true
       break
@@ -172,7 +214,7 @@ cmd_push() {
   done
 
   if [ "$has_diff" = true ]; then
-    echo "Warning: this will overwrite files in the main worktree."
+    echo "Warning: this will overwrite files in $label."
     printf "Continue? [y/N] "
     read -r answer
     if [[ ! "$answer" =~ ^[Yy]$ ]]; then
@@ -184,19 +226,19 @@ cmd_push() {
   local count=0
   for rel in "${found[@]}"; do
     src="${REPO_ROOT}/${rel}"
-    dest="${main}/${rel}"
+    dest="${target}/${rel}"
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
     echo "  pushed: $rel"
     count=$((count + 1))
   done
 
-  echo "Pushed $count env file(s) to main worktree"
+  echo "Pushed $count env file(s) to $label"
 }
 
 case "${1:-}" in
   init) cmd_init ;;
-  pull) cmd_pull ;;
-  push) cmd_push ;;
+  pull) cmd_pull "${2:-}" ;;
+  push) cmd_push "${2:-}" ;;
   *) usage ;;
 esac
