@@ -5,14 +5,14 @@ Sync .env files across git worktrees. The main worktree is the source of truth â
 ## Install
 
 ```bash
-npm install -g envtree
+npm install -g envtree-sync
 ```
 
 Or with other package managers:
 
 ```bash
-yarn global add envtree
-pnpm add -g envtree
+yarn global add envtree-sync
+pnpm add -g envtree-sync
 ```
 
 ## Setup
