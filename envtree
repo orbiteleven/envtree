@@ -46,7 +46,7 @@ resolve_files() {
   fi
 
   local globs
-  globs="$(sed -n '/\"files\"/,/\]/{ s/^ *"\([^"]*\)".*/\1/p; }' "$config" | grep -v '^files$')"
+  globs="$(sed -n '/\"files\"/,/\]/{ s/^[[:space:]]*"\([^"]*\)".*/\1/p; }' "$config" | grep -v '^files$')"
   debug "config globs: $(echo "$globs" | tr '\n' ', ')"
 
   local files=()
@@ -77,7 +77,7 @@ get_config_source() {
   local config="${REPO_ROOT}/${CONFIG_FILE}"
   if [ -f "$config" ]; then
     local raw
-    raw="$(sed -n 's/^ *"source" *: *"\(.*\)".*/\1/p' "$config" | head -1)"
+    raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
     if [ -n "$raw" ]; then
       # Expand ~ to home directory
       local expanded="${raw/#\~/$HOME}"
