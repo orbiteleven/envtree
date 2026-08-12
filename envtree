@@ -58,6 +58,35 @@ expand_path() {
   printf '%s' "$result$rest"
 }
 
+# Read a top-level key from the config with node rather than by matching lines,
+# so reformatting $CONFIG_FILE (Prettier, Biome, minifying, tabs) can't break it.
+# Strings print as one line, arrays one string element per line, missing keys
+# nothing. Callers must check the exit status: $( ) subshells don't inherit
+# errexit without bash 4.4's inherit_errexit, and macOS ships bash 3.2.
+read_config_key() {
+  local key="$1"
+  local config="${REPO_ROOT}/${CONFIG_FILE}"
+
+  command -v node > /dev/null 2>&1 || {
+    echo "Error: envtree needs node to read $CONFIG_FILE." >&2
+    exit 1
+  }
+
+  node -e '
+const [file, key] = process.argv.slice(1);
+let cfg;
+try {
+  cfg = JSON.parse(require("fs").readFileSync(file, "utf8"));
+} catch (e) {
+  console.error("Error: " + file + " is not valid JSON: " + e.message);
+  process.exit(1);
+}
+for (const v of [].concat((cfg || {})[key] ?? [])) {
+  if (typeof v === "string") console.log(v);
+}
+' "$config" "$key"
+}
+
 # Resolve env files from config globs
 resolve_files() {
   local root="$1"
@@ -70,7 +99,12 @@ resolve_files() {
   fi
 
   local globs
-  globs="$(sed -n '/\"files\"/,/\]/{ s/^[[:space:]]*"\([^"]*\)".*/\1/p; }' "$config" | grep -v '^files$')"
+  globs="$(read_config_key files)" || exit 1
+  if [ -z "$globs" ]; then
+    echo "Error: \"files\" is required in $CONFIG_FILE." >&2
+    echo "Set it to a list of glob patterns (e.g. [\".env\", \"apps/*/.env.local\"])." >&2
+    exit 1
+  fi
   debug "config globs: $(echo "$globs" | tr '\n' ', ')"
 
   local files=()
@@ -111,7 +145,8 @@ get_default_source() {
       exit 1
     fi
 
-    raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
+    raw="$(read_config_key source)" || exit 1
+    raw="${raw%%$'\n'*}"
     origin="\"source\" in $CONFIG_FILE"
     if [ -z "$raw" ]; then
       echo "Error: no source directory configured." >&2
@@ -174,16 +209,14 @@ cmd_init() {
     exit 1
   fi
 
-  printf '{\n' > "$config"
-  [ -n "$source_dir" ] && printf '  "source": "%s",\n' "$source_dir" >> "$config"
-  printf '  "files": [\n' >> "$config"
-  local i=0
-  for g in "${globs[@]}"; do
-    [ $i -gt 0 ] && printf ',\n' >> "$config"
-    printf '    "%s"' "$g" >> "$config"
-    i=$((i + 1))
-  done
-  printf '\n  ]\n}\n' >> "$config"
+  # Serialize with node so values needing escaping (" or \) stay valid JSON.
+  # An empty source is omitted, leaving $ENVTREE_SOURCE to supply it.
+  node -e '
+const fs = require("fs");
+const [file, source, ...files] = process.argv.slice(1);
+const cfg = source ? { source: source, files: files } : { files: files };
+fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+' "$config" "$source_dir" "${globs[@]}"
 
   echo ""
   echo "Created $CONFIG_FILE:"
