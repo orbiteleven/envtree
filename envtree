@@ -30,8 +30,32 @@ usage() {
   echo ""
   echo "  --debug       Show detailed resolution and copy steps"
   echo ""
-  echo "Source priority: <dir> arg > \"source\" in $CONFIG_FILE"
+  echo "Source priority: <dir> arg > \$ENVTREE_SOURCE > \"source\" in $CONFIG_FILE"
+  echo ""
+  echo "\$ENVTREE_SOURCE lets each machine set its own source directory without"
+  echo "committing a personal path. Paths may use ~ and \$VAR / \${VAR}."
   exit 1
+}
+
+# Expand a leading ~ and any $VAR / ${VAR} references in a path.
+# Done manually rather than with eval so config values can't execute code.
+expand_path() {
+  local raw="$1"
+  local rest="${raw/#\~/$HOME}"
+  local result=""
+  local re='^([^$]*)\$(\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(.*)$'
+
+  while [[ "$rest" =~ $re ]]; do
+    local name="${BASH_REMATCH[3]:-${BASH_REMATCH[4]}}"
+    if [[ ! -v "$name" ]]; then
+      echo "Error: environment variable \$$name (used in '$raw') is not set." >&2
+      exit 1
+    fi
+    result+="${BASH_REMATCH[1]}${!name}"
+    rest="${BASH_REMATCH[5]}"
+  done
+
+  printf '%s' "$result$rest"
 }
 
 # Resolve env files from config globs
@@ -73,29 +97,37 @@ resolve_files() {
   printf '%s\n' "${files[@]}"
 }
 
-get_config_source() {
-  local config="${REPO_ROOT}/${CONFIG_FILE}"
-  if [ ! -f "$config" ]; then
-    echo "Error: $CONFIG_FILE not found in repo root." >&2
-    echo "Run 'envtree init' to create one." >&2
-    exit 1
+# Resolve the source directory: $ENVTREE_SOURCE wins over "source" in the config.
+get_default_source() {
+  local raw origin
+  if [ -n "${ENVTREE_SOURCE:-}" ]; then
+    raw="$ENVTREE_SOURCE"
+    origin="\$ENVTREE_SOURCE"
+  else
+    local config="${REPO_ROOT}/${CONFIG_FILE}"
+    if [ ! -f "$config" ]; then
+      echo "Error: $CONFIG_FILE not found in repo root." >&2
+      echo "Run 'envtree init' to create one, or set \$ENVTREE_SOURCE." >&2
+      exit 1
+    fi
+
+    raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
+    origin="\"source\" in $CONFIG_FILE"
+    if [ -z "$raw" ]; then
+      echo "Error: no source directory configured." >&2
+      echo "Set \$ENVTREE_SOURCE to the directory containing your .env files," >&2
+      echo "or add \"source\" to $CONFIG_FILE (e.g. ~/projects/myapp)." >&2
+      exit 1
+    fi
   fi
 
-  local raw
-  raw="$(sed -n 's/^[[:space:]]*"source"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1)"
-  if [ -z "$raw" ]; then
-    echo "Error: \"source\" is required in $CONFIG_FILE." >&2
-    echo "Set it to the directory containing your .env files (e.g. ~/projects/myapp)." >&2
-    exit 1
-  fi
-
-  # Expand ~ to home directory
-  local expanded="${raw/#\~/$HOME}"
-  debug "config source: '$raw' -> '$expanded'"
+  local expanded
+  expanded="$(expand_path "$raw")"
+  debug "source from $origin: '$raw' -> '$expanded'"
   if [ -d "$expanded" ]; then
     echo "$expanded"
   else
-    echo "Error: source directory '$raw' from $CONFIG_FILE not found." >&2
+    echo "Error: source directory '$raw' (from $origin) not found." >&2
     exit 1
   fi
 }
@@ -116,15 +148,13 @@ cmd_init() {
   fi
 
   echo "Source directory (where your .env files live):"
-  echo "Example: ~/projects/myapp"
+  echo "Examples: ~/projects/myapp, \$PROJECTS/myapp"
+  echo ""
+  echo "Leave empty to omit it, and set \$ENVTREE_SOURCE per machine instead."
+  echo "$CONFIG_FILE is committed, so a literal path has to be valid for everyone."
   echo ""
   printf "> "
   read -r source_dir
-
-  if [ -z "$source_dir" ]; then
-    echo "No source directory entered. Aborted."
-    exit 1
-  fi
 
   echo ""
   echo "Enter .env file glob patterns (one per line, empty line to finish):"
@@ -144,7 +174,9 @@ cmd_init() {
     exit 1
   fi
 
-  printf '{\n  "source": "%s",\n  "files": [\n' "$source_dir" > "$config"
+  printf '{\n' > "$config"
+  [ -n "$source_dir" ] && printf '  "source": "%s",\n' "$source_dir" >> "$config"
+  printf '  "files": [\n' >> "$config"
   local i=0
   for g in "${globs[@]}"; do
     [ $i -gt 0 ] && printf ',\n' >> "$config"
@@ -156,6 +188,14 @@ cmd_init() {
   echo ""
   echo "Created $CONFIG_FILE:"
   cat "$config"
+
+  if [ -z "$source_dir" ]; then
+    echo ""
+    echo "No source in $CONFIG_FILE — set \$ENVTREE_SOURCE before running pull/push:"
+    echo ""
+    echo "  bash/zsh:  echo 'export ENVTREE_SOURCE=\"\$HOME/projects/myapp\"' >> ~/.zshrc"
+    echo "  fish:      set -Ux ENVTREE_SOURCE \"\$HOME/projects/myapp\""
+  fi
 }
 
 cmd_pull() {
@@ -164,7 +204,7 @@ cmd_pull() {
     source="$(cd "$1" && pwd)" || { echo "Error: directory '$1' not found." >&2; exit 1; }
     label="$source"
   else
-    source="$(get_config_source)"
+    source="$(get_default_source)"
     label="$source"
   fi
 
@@ -198,7 +238,7 @@ cmd_push() {
     target="$(cd "$1" && pwd)" || { echo "Error: directory '$1' not found." >&2; exit 1; }
     label="$target"
   else
-    target="$(get_config_source)"
+    target="$(get_default_source)"
     label="$target"
   fi
 
