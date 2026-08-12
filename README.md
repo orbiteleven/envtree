@@ -100,6 +100,8 @@ Referencing a variable that isn't set is an error rather than a silently wrong p
 
 **Source priority:** CLI argument > `$ENVTREE_SOURCE` > `source` in `.envtree.json`.
 
+The file is parsed as real JSON, so layout doesn't matter — running Prettier, Biome, or any other formatter over it is safe, and no ignore rules are needed.
+
 ## Usage
 
 From any worktree:
@@ -179,4 +181,5 @@ npx envtree pull
 ## Requirements
 
 - bash, git
+- node, to read `.envtree.json` (already present if you installed via npm)
 - A git repo with worktrees (`git worktree add`)
