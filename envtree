@@ -157,7 +157,7 @@ get_default_source() {
   fi
 
   local expanded
-  expanded="$(expand_path "$raw")"
+  expanded="$(expand_path "$raw")" || exit 1
   debug "source from $origin: '$raw' -> '$expanded'"
   if [ -d "$expanded" ]; then
     echo "$expanded"
